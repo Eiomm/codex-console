@@ -54,6 +54,7 @@ export interface RunState {
   claudeSources: Record<string, { fresh: number; total: number; final: boolean }>;
   turnDone: boolean;
   verdicting: boolean;
+  reviewTool: string | null;
   lastVerdict: 'pass' | 'fix' | 'fail' | null;
   nextId: number;
 }
@@ -64,7 +65,7 @@ export function emptyRun(): RunState {
     rows: emptyRows(), status: {}, fresh: {}, active: null, lastTs: 0, now: '', nowWho: 'codex', round: 0, gate: false, failed: false,
     files: [], tasks: [], commands: 0, issues: 0,
     agents: { claude: { fresh: 0, total: 0, provisional: false }, codex: { fresh: 0, total: 0, provisional: false } },
-    limits: {}, fast: false, costUsd: null, sandboxes: {}, codexSeen: {}, claudeSeen: {}, claudeSources: {}, turnDone: false, verdicting: false, lastVerdict: null, nextId: 1,
+    limits: {}, fast: false, costUsd: null, sandboxes: {}, codexSeen: {}, claudeSeen: {}, claudeSources: {}, turnDone: false, verdicting: false, reviewTool: null, lastVerdict: null, nextId: 1,
   };
 }
 
@@ -98,6 +99,14 @@ function toolKind(name: string): RowKind {
   if (['Edit', 'Write', 'NotebookEdit'].includes(name)) return '改文件';
   if (name === 'Bash') return '命令';
   return '记录';
+}
+/** The review thread leaves no session log, so its command and result are the only record of it. */
+function reviewConclusion(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { codex?: { stdout?: unknown } };
+    if (typeof parsed.codex?.stdout === 'string' && parsed.codex.stdout.trim()) return parsed.codex.stdout;
+  } catch { /* not JSON: show the text as it is */ }
+  return text;
 }
 const AGENT_NAME: Record<'claude' | 'codex', string> = { claude: 'Claude', codex: 'Codex' };
 
@@ -133,10 +142,16 @@ export function applyEvent(prev: RunState, e: RunEvent): { run: RunState; packet
     run.limits = { ...run.limits, [e.source]: e.windows };
     return { run, packet };
   }
-  const node = nodeFor(run, e);
+  let node = nodeFor(run, e);
+  const companion = e.agent === 'claude' && e.kind === 'tool' && e.name === 'Bash' && e.summary.includes('codex-companion.mjs');
+  const isReview = companion && e.kind === 'tool' && /\sreview(\s|$)/.test(e.summary);
+  const isReviewResult = e.kind === 'toolResult' && e.toolUseId === run.reviewTool;
+  // Starting, waiting on and collecting Codex jobs is plumbing, not activity worth recording.
+  if (companion && !isReview) return { run, packet };
+  if (isReview || isReviewResult) node = 're';
   // While a task is with Codex, Claude only runs a forwarder that relays it. That plumbing is not
   // Codex's work, so it must not appear in the implementation record.
-  if (e.agent === 'claude' && node === 'impl' && (e.kind === 'tool' || e.kind === 'toolResult' || e.kind === 'message')) return { run, packet };
+  if (e.agent === 'claude' && node === 'impl' && !isReview && !isReviewResult && (e.kind === 'tool' || e.kind === 'toolResult' || e.kind === 'message')) return { run, packet };
   const add = (kind: RowKind, action: string, result?: string, detail?: string, isDiff?: boolean) => {
     run.rows = { ...run.rows, [node]: insertRow(run.rows[node], { id: run.nextId, tsMs: e.tsMs, kind, action, result, detail, isDiff }) };
     run.nextId += 1;
@@ -179,12 +194,26 @@ export function applyEvent(prev: RunState, e: RunEvent): { run: RunState; packet
       break;
     }
     case 'tool': {
+      if (isReview) {
+        run.reviewTool = e.toolUseId;
+        add('记录', '新线程只读审查当前改动');
+        say('Codex 正在只读线程里独立复审', '只读审查');
+        if (!stale) packet = { edge: 'toRe', who: 'codex', count: 3 };
+        break;
+      }
       const line = firstLine(e.summary) || e.name;
       add(toolKind(e.name), e.name === 'Bash' ? line : `${e.name} ${line}`);
       say(`${name} 刚调用 ${e.name}：${line}`, `调用 ${e.name}`);
       break;
     }
     case 'toolResult':
+      if (isReviewResult) {
+        run.reviewTool = null;
+        const conclusion = reviewConclusion(e.text);
+        if (e.isError) { run.issues += 1; add('问题', '复审没有完成', firstLine(conclusion), conclusion); say('Codex 复审没有完成', '复审失败'); }
+        else { add('记录', '复审结论', firstLine(conclusion), conclusion); say(`Codex 复审结论：${firstLine(conclusion)}`, '已给出意见'); }
+        break;
+      }
       if (e.isError) { run.issues += 1; add('问题', '工具调用失败', firstLine(e.text), e.text); }
       break;
     case 'fileChange': {
