@@ -74,11 +74,11 @@ impl Harness {
 #[test]
 fn args_have_exact_permissions_and_optional_model_budget() {
     let commands = vec!["cargo test --offline".into(), "npm run check".into()];
-    let args = build_claude_args("goal", "/tmp/plugin path/script.mjs", &commands, &ClaudeOptions::default());
+    let args = build_claude_args("goal", "/tmp/plugin path/script.mjs", "/Users/x/Library/Application Support/run/task.md", &commands, &ClaudeOptions::default());
     assert_eq!(&args[..8], ["-p", "goal", "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--max-budget-usd", "10"]);
-    assert_eq!(&args[8..], ["--allowedTools", "Read", "Grep", "Glob", "Agent", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(node \"/tmp/plugin path/script.mjs\":*)", "Bash(node /tmp/plugin path/script.mjs:*)", "Bash(cargo test --offline:*)", "Bash(npm run check:*)"]);
-    for bad in ["Bash", "Edit", "Write", "NotebookEdit", "--dangerously-skip-permissions", "bypassPermissions"] { assert!(!args.iter().any(|a| a == bad)); }
-    let args = build_claude_args("p", "/script", &[], &ClaudeOptions { model: Some("model".into()), max_budget_usd: Some(4.0) });
+    assert_eq!(&args[8..], ["--add-dir", "/Users/x/Library/Application Support/run", "--allowedTools", "Read", "Grep", "Glob", "Edit(//Users/x/Library/Application Support/run/task.md)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(node \"/tmp/plugin path/script.mjs\":*)", "Bash(node /tmp/plugin path/script.mjs:*)", "Bash(cargo test --offline:*)", "Bash(npm run check:*)"]);
+    for bad in ["Bash", "Edit", "Write", "NotebookEdit", "Agent", "--dangerously-skip-permissions", "bypassPermissions"] { assert!(!args.iter().any(|a| a == bad)); }
+    let args = build_claude_args("p", "/script", "/run/task.md", &[], &ClaudeOptions { model: Some("model".into()), max_budget_usd: Some(4.0) });
     assert!(args.windows(2).any(|a| a == ["--model", "model"]));
     assert!(args.windows(2).any(|a| a == ["--max-budget-usd", "4"]));
 }
@@ -100,6 +100,41 @@ fn validates_goal_commands_repo_and_ids() {
     for id in ["", "../x", "a/b", "a.b", "中", "a\\b"] { assert!(validate_id(id).is_err()); }
 }
 #[test]
+fn unsafe_task_paths_are_rejected_before_creating_a_run() {
+    let mut h = Harness::new("exit 0");
+    let original_data = h.manager.config.data.clone();
+    for forbidden in ['"', '\'', '`', ';', '|', '&', '$', '<', '>', '\\', '\n', '\r', '*', '?', '(', ')'] {
+        h.manager.config.data = h._temp.0.join(format!("bad{forbidden}data"));
+        let error = h.manager.start_run(request(&h.repo)).unwrap_err();
+        assert!(error.contains("任务书路径"), "{forbidden:?}: {error}");
+        assert!(!h.manager.config.data.exists());
+    }
+    assert!(validate_task_file(Path::new("relative/task.md")).is_err());
+    assert_eq!(fs::read_dir(original_data.join("runs")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(original_data.join("worktrees")).unwrap().count(), 0);
+    assert!(git::run(&h.repo, &["branch", "--list", "console/*"]).unwrap().is_empty());
+    assert!(!h._temp.0.join("args").exists());
+}
+#[test]
+fn start_passes_exact_task_file_and_directory_with_spaces() {
+    let mut h = Harness::new("cat \"$FAKE_STREAM\"");
+    let mut config = h.manager.config.clone();
+    config.data = h._temp.0.join("Library/Application Support/console");
+    h.manager = RunManager::new(config, h.manager.emit.clone()).unwrap();
+    let mut request = request(&h.repo);
+    request.goal = "任务含全角空格：甲\u{3000}乙".into();
+    let info = h.manager.start_run(request).unwrap();
+    assert_eq!(h.done(&info.run_id).status, RunStatus::Passed);
+    let dir = h.manager.run_dir(&info.run_id).unwrap();
+    let task_file = dir.join("task.md");
+    let args = fs::read_to_string(h._temp.0.join("args")).unwrap();
+    assert!(args.contains(&format!("--add-dir\n{}\n--allowedTools\n", dir.display())));
+    assert!(args.contains(&format!("Edit(/{})\n", task_file.display())));
+    assert!(args.contains(&format!("--prompt-file \"{}\" --json", task_file.display())));
+    assert!(!args.contains("{{TASKFILE}}"));
+    assert!(!task_file.starts_with(&info.worktree));
+}
+#[test]
 fn launch_version_selection_errors_path_and_prompt() {
     let h = Harness::new("exit 0");
     let mut config = h.manager.config.clone();
@@ -113,8 +148,10 @@ fn launch_version_selection_errors_path_and_prompt() {
     fs::copy(bin.join("fake-claude"), bin.join("claude")).unwrap();
     config.variables.remove(std::ffi::OsStr::new("CODEX_CONSOLE_CLAUDE_BIN"));
     assert_eq!(config.launch().unwrap().executable, bin.join("claude"));
-    let output = config::prompt("goal {{BASE}}", "branch", "sha", "/script", &[]);
-    assert!(output.contains("goal {{BASE}}")); assert!(output.contains("（未指定，只做读代码审查）")); assert!(output.contains("node \"/script\" review --wait"));
+    let output = config::prompt("goal {{BASE}} {{TASKFILE}}", "branch", "sha", "/script", "/run with spaces/task.md", &[]);
+    assert!(output.contains("goal {{BASE}} {{TASKFILE}}")); assert!(output.contains("（未指定，只做读代码审查）")); assert!(output.contains("node \"/script\" review --background --json"));
+    assert!(output.contains("--prompt-file \"/run with spaces/task.md\" --json"));
+    assert_eq!(output.matches("{{TASKFILE}}").count(), 1);
 }
 #[test]
 fn fake_claude_passed_isolated_events_persisted_and_replayed() {

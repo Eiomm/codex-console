@@ -5,13 +5,19 @@ use std::{collections::BTreeMap, ffi::{OsStr, OsString}, fs, path::{Path, PathBu
 pub struct ClaudeOptions { pub model: Option<String>, pub max_budget_usd: Option<f64> }
 
 /// Each permission is a separate argv entry; the companion path is always fully expanded.
-pub fn build_claude_args(prompt: &str, companion: &str, verify_commands: &[String], options: &ClaudeOptions) -> Vec<String> {
+pub fn build_claude_args(prompt: &str, companion: &str, task_file: &str, verify_commands: &[String], options: &ClaudeOptions) -> Vec<String> {
     let mut args = vec!["-p".into(), prompt.into(), "--output-format".into(), "stream-json".into(),
         "--verbose".into(), "--strict-mcp-config".into(), "--max-budget-usd".into(),
         options.max_budget_usd.unwrap_or(10.0).to_string()];
     if let Some(model) = &options.model { args.extend(["--model".into(), model.clone()]); }
+    // --allowedTools consumes subsequent arguments, so all flags must precede it.
+    let task_dir = Path::new(task_file).parent().unwrap_or_else(|| Path::new("/"));
+    args.extend(["--add-dir".into(), task_dir.to_string_lossy().into_owned()]);
     args.push("--allowedTools".into());
-    args.extend(["Read", "Grep", "Glob", "Agent", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"].map(str::to_owned));
+    args.extend(["Read", "Grep", "Glob"].map(str::to_owned));
+    // Claude's absolute-path permission syntax needs an extra slash (Edit(//...)).
+    args.push(format!("Edit(/{task_file})"));
+    args.extend(["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"].map(str::to_owned));
     args.extend([format!("Bash(node \"{companion}\":*)"), format!("Bash(node {companion}:*)")]);
     args.extend(verify_commands.iter().map(|command| format!("Bash({command}:*)")));
     args
@@ -81,10 +87,10 @@ fn latest_companion(root: &Path) -> Option<PathBuf> {
     }).max_by(|a,b| a.0.cmp(&b.0)).map(|(_, file)| file)
 }
 
-pub(super) fn prompt(goal: &str, branch: &str, base: &str, companion: &str, verify: &[String]) -> String {
+pub(super) fn prompt(goal: &str, branch: &str, base: &str, companion: &str, task_file: &str, verify: &[String]) -> String {
     let verify = if verify.is_empty() { "（未指定，只做读代码审查）".into() } else { verify.join("\n") };
     // Single pass: user text containing a placeholder is never recursively substituted.
-    let values = [("{{GOAL}}", goal), ("{{BRANCH}}", branch), ("{{BASE}}", base), ("{{COMPANION}}", companion), ("{{VERIFY}}", &verify)];
+    let values = [("{{GOAL}}", goal), ("{{BRANCH}}", branch), ("{{BASE}}", base), ("{{COMPANION}}", companion), ("{{TASKFILE}}", task_file), ("{{VERIFY}}", &verify)];
     let mut remaining = include_str!("prompt.md");
     let mut result = String::new();
     while let Some((at, key, value)) = values.iter().filter_map(|(k,v)| remaining.find(k).map(|at| (at, *k, *v))).min_by_key(|x| x.0) {

@@ -495,3 +495,75 @@ fn watch_reset_notifications_and_since_filter() {
     fs::write(&replacement, "\n").unwrap(); fs::rename(replacement, &path).unwrap();
     assert!(matches!(&poller.poll_updates(Instant::now(), now, || false)[0], WatchUpdate::Reset(id) if id == "new"));
 }
+
+fn bash_tool_frame(command: &str, parent: Option<&str>) -> String {
+    json!({"type":"assistant","session_id":"bash-handoff","parent_tool_use_id":parent,
+        "message":{"content":[{"type":"tool_use","id":"bash-tool","name":"Bash","input":{"command":command}}]}}).to_string()
+}
+
+#[test]
+fn claude_bash_handoff_only_for_main_task_subcommand() {
+    let mut parser = claude::ClaudeParser::new();
+    for (command, expected) in [
+        ("node \"/plugin path/codex-companion.mjs\" task --background --write --prompt-file \"/run path/task.md\" --json", Some(HandoffMode::Fresh)),
+        ("node /plugin/codex-companion.mjs task --background --write --resume-last --prompt-file /run/task.md --json", Some(HandoffMode::Resume)),
+        ("node /plugin/codex-companion.mjs status job --wait --timeout-ms 150000 --json", None),
+        ("node /plugin/codex-companion.mjs result job", None),
+        ("node /plugin/codex-companion.mjs review --background --json", None),
+        ("node /plugin/codex-companion.mjs cancel", None),
+        ("node /other.mjs task --background --write", None),
+        ("node \"/plugin task path/codex-companion.mjs\" status job", None),
+        ("node /plugin/codex-companion.mjs result \"a task b\"", None),
+    ] {
+        let events = parser.feed_line(&bash_tool_frame(command, None));
+        assert!(matches!(&events[0].kind, EventKind::Tool { name, .. } if name == "Bash"));
+        assert_eq!(events.len(), if expected.is_some() { 2 } else { 1 }, "{command}");
+        if let Some(expected) = expected {
+            assert!(matches!(&events[1].kind, EventKind::Handoff { mode, description }
+                if *mode == expected && description == "Codex 接收任务"));
+        }
+        let sub = parser.feed_line(&bash_tool_frame(command, Some("parent-tool")));
+        assert_eq!(sub.len(), 1);
+        assert!(matches!(sub[0].kind, EventKind::Tool { .. }));
+    }
+    let command = "node /plugin/codex-companion.mjs task --background --write";
+    let mut other_tool: serde_json::Value = serde_json::from_str(&bash_tool_frame(command, Some(""))).unwrap();
+    other_tool["message"]["content"][0]["name"] = json!("Read");
+    assert_eq!(parser.feed_line(&other_tool.to_string()).len(), 1);
+    assert_eq!(parser.feed_line(&bash_tool_frame(command, Some(""))).len(), 2);
+}
+
+#[test]
+fn claude_polling_is_impl_until_codex_completes_then_review() {
+    use summary::Phase;
+    let mut parser = claude::ClaudeParser::new();
+    let mut summary = RunSummary::default();
+    for event in parser.feed_line_at(&bash_tool_frame("node /plugin/codex-companion.mjs task --background --write --prompt-file /run/task.md --json", None), 10) {
+        summary.apply(&event);
+    }
+    assert_eq!((summary.phase, summary.round), (Phase::Impl, 1));
+    let poll = bash_tool_frame("node /plugin/codex-companion.mjs status job --wait --timeout-ms 150000 --json", None);
+    let reply = json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-tool","content":"running"}]}}).to_string();
+    for ts in [20, 30] {
+        for event in parser.feed_line_at(&poll, ts).into_iter().chain(parser.feed_line_at(&reply, ts + 1)) {
+            summary.apply(&event);
+            assert_eq!((summary.phase, summary.round), (Phase::Impl, 1));
+        }
+    }
+    let mut codex = CodexParser::new();
+    let completed = json!({"type":"event_msg","timestamp":"1970-01-01T00:00:00.040Z","payload":{"type":"task_complete","last_agent_message":"done"}});
+    for event in codex.feed_line(&completed.to_string()) { summary.apply(&event); }
+    for (ts, frame) in [
+        (50, poll),
+        (51, reply),
+        (60, bash_tool_frame("node /plugin/codex-companion.mjs result job", None)),
+        (70, json!({"type":"assistant","message":{"content":[{"type":"text","text":"开始审查"}]}}).to_string()),
+    ] {
+        for event in parser.feed_line_at(&frame, ts) {
+            summary.apply(&event);
+            assert_eq!((summary.phase, summary.round), (Phase::Review, 1));
+        }
+    }
+    assert_eq!(summary.phases[&Phase::Impl].tools, 2);
+    assert_eq!(summary.phases[&Phase::Review].tools, 2);
+}

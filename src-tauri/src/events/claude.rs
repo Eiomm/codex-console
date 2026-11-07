@@ -64,6 +64,15 @@ impl ClaudeParser {
                             let summary = ["command", "file_path", "description", "pattern"].into_iter().find_map(|k| input[k].as_str()).unwrap_or("");
                             let (summary, truncated) = self.redactor.text(summary);
                             kinds.push(EventKind::Tool { tool_use_id: self.redactor.clean(s(&block["id"])), name: self.redactor.clean(s(&block["name"])), summary, is_error: false, truncated });
+                            let command = s(&input["command"]);
+                            // Inspect the subcommand immediately after the script path, not
+                            // a " task " substring inside a path or a status/result argument.
+                            let task = command.split_once("codex-companion.mjs")
+                                .is_some_and(|(_, args)| args.trim_start_matches(['"', '\'']).starts_with(" task "));
+                            if s(&v["parent_tool_use_id"]).is_empty() && block["name"] == "Bash" && task {
+                                let mode = if command.split_whitespace().any(|arg| arg == "--resume-last") { HandoffMode::Resume } else { HandoffMode::Fresh };
+                                kinds.push(EventKind::Handoff { mode, description: "Codex 接收任务".into() });
+                            }
                         }
                         "thinking" => {},
                         _ => self.skipped += 1,

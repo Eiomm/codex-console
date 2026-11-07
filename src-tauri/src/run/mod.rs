@@ -73,13 +73,15 @@ impl RunManager {
         let info = RunInfo { worktree: self.config.data.join("worktrees").join(&run_id), branch: format!("console/{run_id}"),
             run_id, repo, base, status: RunStatus::Running, started_at_ms, goal };
         let dir = self.run_dir(&info.run_id)?;
+        let task_file = dir.join("task.md");
+        let task_file = validate_task_file(&task_file)?;
         fs::create_dir(&dir).map_err(|_| "无法创建运行记录目录")?;
         if let Err(error) = git::run(&info.repo, &["worktree", "add", "-b", &info.branch, path_str(&info.worktree)?, "HEAD"]) {
             let _ = fs::remove_dir_all(&dir);
             return Err(error);
         }
-        let prompt = config::prompt(&info.goal, &info.branch, &info.base, path_str(&launch.companion)?, &request.verify_commands);
-        let args = build_claude_args(&prompt, path_str(&launch.companion)?, &request.verify_commands, &ClaudeOptions { model: request.model, ..Default::default() });
+        let prompt = config::prompt(&info.goal, &info.branch, &info.base, path_str(&launch.companion)?, task_file, &request.verify_commands);
+        let args = build_claude_args(&prompt, path_str(&launch.companion)?, task_file, &request.verify_commands, &ClaudeOptions { model: request.model, ..Default::default() });
         let stop = Arc::new(AtomicBool::new(false));
         let start = worker::start(&self.config, &info, launch, args, stop.clone(), self.emit.clone());
         match start {
@@ -208,6 +210,13 @@ impl RunManager {
 impl Drop for RunManager { fn drop(&mut self) { self.shutdown(); } }
 fn merge_result(outcome: &str, info: &RunInfo) -> MergeResult { MergeResult { outcome: outcome.into(), branch: info.branch.clone() } }
 fn path_str(path: &Path) -> Result<&str, String> { path.to_str().ok_or_else(|| "路径必须是有效文本".into()) }
+fn validate_task_file(path: &Path) -> Result<&str, String> {
+    let text = path_str(path)?;
+    if !path.is_absolute() || text.chars().any(|c| "\"'`;|&$<>\\\n\r*?()".contains(c)) {
+        return Err("任务书路径必须是绝对路径且不能含权限规则不支持的字符".into());
+    }
+    Ok(text)
+}
 fn validate_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > 100 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') { Err("runId 只能包含字母、数字和连字符".into()) } else { Ok(()) }
 }
