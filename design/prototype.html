@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex 控制台 原型</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face { font-family: "Martian Mono Variable"; src: url("fonts/martian-mono.woff2") format("woff2"); font-weight: 100 800; font-display: block; }
+:root {
+  --void: #05070D; --panel: #0B0F19; --raised: #111726; --line: #22304A; --hot: #3A5578;
+  --text: #D9E4F2; --dim: #8494AC; --claude: #FF7A45; --codex: #25E2FF; --human: #F7E733; --bad: #FF3B6B; --ok: #3DF5A0;
+  --mono: "Martian Mono Variable", "PingFang SC", monospace; --zh: "PingFang SC", "Martian Mono Variable", sans-serif;
+  --cut: 10px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--void); color: var(--text); font: 400 12.5px/1.5 var(--zh); -webkit-font-smoothing: antialiased; }
+body { background-image: linear-gradient(rgba(58,85,120,.10) 1px, transparent 1px), linear-gradient(90deg, rgba(58,85,120,.10) 1px, transparent 1px); background-size: 32px 32px; }
+button, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 1px solid var(--human); outline-offset: 2px; }
+
+.app { display: flex; flex-direction: column; gap: 8px; padding: 8px; min-height: 100vh; }
+
+/* Chamfered frame: the outer layer is the 1px line, the inner layer is the fill. */
+.mod { position: relative; background: var(--line); clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut))); min-width: 0; }
+.mod > .in { position: absolute; inset: 1px; background: var(--panel); clip-path: inherit; }
+.mod > .body { position: relative; height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.mod-h { display: flex; align-items: center; gap: 8px; padding: 8px 14px 6px; flex-wrap: wrap; }
+.tag { font: 500 10.5px var(--mono); letter-spacing: .08em; color: var(--dim); }
+.mod-h h2 { margin: 0; font-size: 13px; font-weight: 600; }
+
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 8px 14px; }
+.brand { font: 600 13px var(--mono); letter-spacing: .02em; white-space: nowrap; }
+.brand i { font-style: normal; color: var(--codex); }
+.task { flex: 1 1 220px; min-width: 0; display: flex; gap: 10px; align-items: baseline; }
+.task b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { font: 400 11px var(--mono); color: var(--dim); white-space: nowrap; }
+.rounds { display: flex; align-items: center; gap: 5px; color: var(--dim); white-space: nowrap; }
+.rounds i { width: 10px; height: 4px; background: var(--line); }
+.rounds i.on { background: var(--text); }
+.clock { font: 500 13px var(--mono); }
+.btn { height: 28px; padding: 0 12px; border: 1px solid var(--hot); background: transparent; white-space: nowrap; }
+.btn:hover { background: var(--raised); }
+.btn.go { border-color: var(--human); color: var(--void); background: var(--human); font-weight: 600; }
+.btn.go:hover { background: #FFF45E; }
+
+.grid { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); flex: 1; }
+.tele { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+@media (min-width: 1040px) {
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 30%); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "flow insp" "tele tele"; }
+  .flow-m { grid-area: flow; } .insp-m { grid-area: insp; } .tele { grid-area: tele; }
+}
+
+.now { display: flex; align-items: center; gap: 10px; margin: 0 14px 4px; padding: 8px 10px; background: var(--raised); border-left: 2px solid var(--who, var(--dim)); min-height: 40px; }
+.now .lbl { font: 500 10.5px var(--mono); letter-spacing: .08em; color: var(--who, var(--dim)); flex: none; }
+.now .txt { font-size: 14px; font-weight: 500; min-width: 0; }
+.now .txt::after { content: "▌"; margin-left: 4px; color: var(--who, var(--dim)); animation: caret 1s steps(2) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+
+#flow { display: block; width: 100%; height: auto; padding: 0 8px 4px; overflow: visible; }
+.trace { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.trace.back { stroke-dasharray: 5 4; }
+.glow { fill: none; stroke-width: 7; opacity: 0; transition: opacity .3s linear; }
+.hot { fill: none; stroke-width: 2; opacity: 0; transition: opacity .3s linear; }
+.edge-on .glow { opacity: .16; }
+.edge-on .hot { opacity: 1; }
+.edge-l { font: 400 10.5px var(--zh); fill: var(--dim); }
+.edge-on .edge-l { fill: var(--text); }
+.node { cursor: pointer; }
+.node .frame { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.node.active .frame { stroke: var(--c); stroke-width: 1.5; fill: var(--raised); }
+.node .halo { fill: none; stroke: var(--c); stroke-width: 6; opacity: 0; transition: opacity .3s linear; }
+.node.active .halo { opacity: .22; }
+.node.sel .frame { fill: var(--raised); }
+.node .mark { fill: var(--c); opacity: 0; }
+.node.sel .mark { opacity: 1; }
+.node:hover .frame { stroke: var(--hot); }
+.node.active:hover .frame { stroke: var(--c); }
+.node:focus-visible { outline: none; }
+.node:focus-visible .frame { stroke: var(--human); stroke-width: 2; }
+.n-t { font: 600 13.5px var(--zh); fill: var(--text); }
+.n-w { font: 500 10.5px var(--mono); fill: var(--c); }
+.n-r { font: 400 11px var(--zh); fill: var(--dim); }
+.n-v { font: 500 19px var(--mono); fill: var(--text); letter-spacing: -.03em; }
+.n-u { font: 400 10.5px var(--zh); fill: var(--dim); }
+.n-s { font: 400 11px var(--mono); fill: var(--dim); }
+.node.active .n-s { fill: var(--c); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 0 14px 10px; font-size: 11px; color: var(--dim); align-items: center; }
+.legend i { display: inline-block; width: 8px; height: 3px; margin-right: 6px; vertical-align: middle; }
+
+.tabs { display: flex; gap: 2px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; background: none; padding: 6px 10px; color: var(--dim); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs button[aria-selected="true"] { color: var(--text); border-color: var(--c, var(--text)); }
+.what { margin: 0; padding: 0 14px 8px; color: var(--dim); }
+.panes { flex: 1; min-height: 180px; overflow-y: auto; padding: 4px 0 8px; }
+@media (min-width: 1040px) { .panes { height: 0; } }
+.rows { list-style: none; margin: 0; padding: 0; font: 400 11.5px/1.5 var(--mono); }
+.rows li { display: grid; grid-template-columns: 42px 44px minmax(0, 1fr); gap: 8px; padding: 6px 14px; border-bottom: 1px solid rgba(34,48,74,.55); }
+.rows time { color: var(--dim); }
+.kind { font: 400 10.5px var(--zh); color: var(--dim); }
+.kind.issue { color: var(--bad); font-weight: 600; }
+.res { color: var(--dim); }
+.res.bad { color: var(--bad); }
+.empty { padding: 14px; color: var(--dim); }
+.files { list-style: none; margin: 0; padding: 0 14px; font: 400 11.5px var(--mono); }
+.files li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; }
+.plus { color: var(--ok); } .minus { color: var(--bad); }
+pre.diff { margin: 4px 14px 0; padding: 8px; background: var(--void); font: 400 11px/1.6 var(--mono); overflow-x: auto; white-space: pre; }
+.prompt { margin: 0 14px; padding: 8px; background: var(--void); font: 400 11.5px/1.65 var(--zh); white-space: pre-wrap; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.actions[hidden] { display: none; }
+
+.t-body { padding: 0 14px 12px; }
+.meter { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 7px; font-size: 11.5px; }
+.meter .who { white-space: nowrap; }
+.track { height: 5px; background: var(--raised); }
+.track i { display: block; height: 100%; width: 0; background: var(--c, var(--text)); transition: width .3s linear; }
+.num { font: 500 11.5px var(--mono); white-space: nowrap; }
+.sub { font-size: 11px; color: var(--dim); margin: 6px 0 0; }
+.ic { width: 14px; height: 14px; fill: currentColor; vertical-align: -3px; margin-right: 4px; }
+.c-claude { color: var(--claude); --c: var(--claude); } .c-codex { color: var(--codex); --c: var(--codex); }
+#spark { display: block; width: 100%; height: 28px; margin-top: 6px; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+select { width: 100%; height: 28px; background: var(--raised); border: 1px solid var(--line); padding: 0 6px; font: 400 11px var(--mono); }
+.sw { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 0; background: none; border: 0; text-align: left; }
+.sw .bar { width: 36px; height: 16px; border: 1px solid var(--hot); position: relative; flex: none; }
+.sw .bar::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 10px; background: var(--dim); transition: left .1s linear; }
+.sw[aria-checked="true"] .bar { border-color: var(--human); }
+.sw[aria-checked="true"] .bar::after { left: 18px; background: var(--human); }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
+.stats b { display: block; font: 500 19px var(--mono); }
+.stats span { font-size: 11px; color: var(--dim); }
+.tele .mod { min-height: 118px; }
+@media (prefers-reduced-motion: reduce) { .now .txt::after { animation: none; } .glow, .hot, .halo { transition: none; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-claude" viewBox="0 0 24 24"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"></path></symbol><symbol id="i-codex" viewBox="0 0 24 24"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></symbol></svg>
+<div class="app">
+  <header class="mod"><div class="in"></div><div class="body"><div class="top">
+    <span class="brand">CODEX<i>//</i>控制台</span>
+    <div class="task"><b>修复空窗口时的除零错误</b><span class="chip">target_link</span></div>
+    <span class="chip">示例数据</span>
+    <div class="rounds" aria-label="审查轮次"><span id="rt">第 1 轮</span><i id="r1" class="on"></i><i id="r2"></i><i id="r3"></i></div>
+    <span class="clock" id="clock">00:00</span>
+    <button class="btn" id="pause">暂停</button><button class="btn">停止</button>
+  </div></div></header>
+
+  <div class="grid">
+    <section class="mod flow-m" id="flowMod" aria-label="协作流程"><div class="in"></div><div class="body">
+      <div class="mod-h"><span class="tag">M01</span><h2>协作流程</h2></div>
+      <div class="now" id="now"><span class="lbl">NOW</span><span class="txt" id="nowT"></span></div>
+      <svg id="flow" role="img" aria-label="协作流程图"></svg>
+      <div class="legend"><span><i style="background:var(--claude)"></i>Claude 工作中</span><span><i style="background:var(--codex)"></i>Codex 工作中</span><span><i style="background:var(--human)"></i>需要你决定</span><span>一个数据包约 2 千 token</span></div>
+    </div></section>
+
+    <section class="mod insp-m" aria-label="节点详情"><div class="in"></div><div class="body">
+      <div class="mod-h" id="inspH"><span class="tag">M02</span><h2 id="iT"></h2></div>
+      <p class="what" id="iW"></p>
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="panes" id="pane"></div>
+      <div class="actions" id="actions" hidden><button class="btn go">合并到主分支</button><button class="btn">放弃这次改动</button></div>
+    </div></section>
+
+    <div class="tele">
+      <section class="mod" aria-label="token 消耗"><div class="in"></div><div class="body">
+        <div class="mod-h"><span class="tag">M03</span><h2>token</h2></div>
+        <div class="t-body">
+          <div class="meter c-claude" style="margin-top:0"><span class="who"><svg class="ic"><use href="#i-claude"/></svg>Claude</span><div class="track"><i id="bClaude"></i></div><span class="num" id="sClaude">0</span></div>
+          <div class="meter c-codex"><span class="who"><svg class="ic"><use href="#i-codex"/></svg>Codex</span><div class="track"><i id="bCodex"></i></div><span class="num" id="sCodex">0</span></div>
+          <svg id="spark" viewBox="0 0 200 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </div>
+      </div></section>
+      <section class="mod" aria-label="额度"><div class="in"></div><div class="body">
+        <div class="mod-h"><span class="tag">M04</span><h2>额度</h2></div>
+        <div class="t-body">
+          <div class="meter c-codex" style="margin-top:0"><span class="who">Codex 周</span><div class="track"><i style="width:1%"></i></div><span class="num">1%</span></div>
+          <div class="meter c-claude"><span class="who">Claude 5 时</span><div class="track"><i style="width:5%"></i></div><span class="num">5%</span></div>
+          <div class="meter c-claude"><span class="who">Claude 7 天</span><div class="track"><i style="width:49%"></i></div><span class="num">49%</span></div>
+          <p class="sub">Codex 有 2 次免费重置</p>
+        </div>
+      </div></section>
+      <section class="mod" aria-label="引擎"><div class="in"></div><div class="body">
+        <div class="mod-h"><span class="tag">M05</span><h2>Codex 引擎</h2></div>
+        <div class="t-body">
+          <div class="field">
+            <div><label for="m">模型</label><select id="m"><option>gpt-6-astra</option><option>gpt-6.1-sol</option><option>gpt-6.1-terra</option><option>gpt-6-luna</option></select></div>
+            <div><label for="e">推理强度</label><select id="e"><option>low</option><option>medium</option><option selected>high</option><option>xhigh</option></select></div>
+          </div>
+          <button class="sw" role="switch" aria-checked="true" id="fast"><span class="bar"></span><span id="fastT">Fast 开，额度消耗约 ×2.5</span></button>
+        </div>
+      </div></section>
+      <section class="mod" aria-label="本次任务"><div class="in"></div><div class="body">
+        <div class="mod-h"><span class="tag">M06</span><h2>本次任务</h2></div>
+        <div class="t-body stats">
+          <div><b id="cCmd">0</b><span>条命令</span></div>
+          <div><b id="cFile">0</b><span>个文件</span></div>
+          <div><b id="cIssue">0</b><span>个问题</span></div>
+        </div>
+      </div></section>
+    </div>
+  </div>
+</div>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = id => document.getElementById(id);
+const TOKENS_PER_PACKET = 2000;
+
+const NODES = {
+  plan: { title: '规划', who: 'claude', role: '读代码，写任务书和验收标准', what: 'Claude 读需求和相关代码，写出任务书：改哪里、不能动哪里、怎样算完成。' },
+  impl: { title: '实现', who: 'codex', role: '按任务书改代码、写测试', what: 'Codex 在独立分支上按任务书改代码、写测试。这里是它真实运行的命令和改动。' },
+  rev: { title: '审查', who: 'claude', role: '亲自看 diff、亲自跑测试', what: 'Claude 不信任 Codex 的汇报，自己读 diff、自己跑测试，并逐条核对验收标准。' },
+  re: { title: '独立复审', who: 'codex', role: '新线程只读审查，不改代码', what: 'Codex 另开一个新线程只读审查。它没有之前的上下文，不受实现时思路的影响。' },
+  verdict: { title: '裁决', who: 'claude', role: '汇总两份意见，决定去向', what: 'Claude 汇总两份审查意见。全部满足就通过；有问题就带着修复清单打回实现，最多 3 轮。' },
+  gate: { title: '等你决定', who: 'human', role: '合并或放弃，由你决定', what: '两个 AI 的工作到此结束。改动只在独立分支上，主分支没有动，由你决定是否合并。' },
+};
+const LAYOUTS = {
+  narrow: {
+    box: [340, 690],
+    n: { plan: [34, 6, 270, 92], impl: [34, 124, 270, 104], rev: [34, 254, 270, 92], re: [34, 372, 270, 92], verdict: [34, 490, 270, 88], gate: [34, 604, 270, 72] },
+    e: {
+      task: { pts: [[169, 98], [169, 124]], l: ['任务书', 176, 115, 'start'] },
+      toRev: { pts: [[169, 228], [169, 254]], l: ['diff', 176, 245, 'start'] },
+      toRe: { pts: [[34, 190], [14, 190], [14, 418], [34, 418]], l: ['diff', 2, 184, 'start'] },
+      revOut: { pts: [[304, 300], [316, 300], [316, 520], [304, 520]], l: ['意见', 262, 366, 'start'] },
+      reOut: { pts: [[169, 464], [169, 490]], l: ['意见', 176, 481, 'start'] },
+      pass: { pts: [[169, 578], [169, 604]], l: ['通过', 176, 595, 'start'] },
+      back: { pts: [[304, 550], [332, 550], [332, 176], [304, 176]], back: true, l: ['打回', 338, 170, 'end'] },
+    },
+  },
+  wide: {
+    box: [900, 372],
+    n: { plan: [8, 128, 186, 122], impl: [240, 118, 196, 142], rev: [486, 28, 186, 118], re: [486, 232, 186, 118], verdict: [716, 128, 176, 104], gate: [716, 276, 176, 74] },
+    e: {
+      task: { pts: [[194, 189], [240, 189]], l: ['任务书', 217, 180, 'middle'] },
+      toRev: { pts: [[436, 170], [461, 170], [461, 87], [486, 87]], l: ['diff', 466, 80, 'start'] },
+      toRe: { pts: [[436, 208], [461, 208], [461, 291], [486, 291]], l: ['diff', 466, 284, 'start'] },
+      revOut: { pts: [[672, 87], [694, 87], [694, 165], [716, 165]], l: ['意见', 676, 80, 'start'] },
+      reOut: { pts: [[672, 291], [694, 291], [694, 195], [716, 195]], l: ['意见', 676, 306, 'start'] },
+      pass: { pts: [[804, 232], [804, 276]], l: ['通过', 812, 258, 'start'] },
+      back: { pts: [[804, 128], [804, 12], [338, 12], [338, 118]], back: true, l: ['打回：带修复清单', 571, 8, 'middle'] },
+    },
+  },
+  tall: {
+    box: [560, 650],
+    n: { plan: [150, 6, 260, 96], impl: [150, 134, 260, 112], rev: [8, 286, 250, 104], re: [302, 286, 250, 104], verdict: [150, 430, 260, 96], gate: [150, 566, 260, 72] },
+    e: {
+      task: { pts: [[280, 102], [280, 134]], l: ['任务书', 288, 122, 'start'] },
+      toRev: { pts: [[240, 246], [240, 266], [133, 266], [133, 286]], l: ['diff', 180, 260, 'middle'] },
+      toRe: { pts: [[320, 246], [320, 266], [427, 266], [427, 286]], l: ['diff', 380, 260, 'middle'] },
+      revOut: { pts: [[133, 390], [133, 410], [240, 410], [240, 430]], l: ['意见', 180, 404, 'middle'] },
+      reOut: { pts: [[427, 390], [427, 410], [320, 410], [320, 430]], l: ['意见', 380, 404, 'middle'] },
+      pass: { pts: [[280, 526], [280, 566]], l: ['通过', 288, 550, 'start'] },
+      back: { pts: [[410, 478], [556, 478], [556, 190], [410, 190]], back: true, l: ['打回：带修复清单', 483, 184, 'middle'] },
+    },
+  },
+};
+const colorOf = w => `var(--${w})`;
+
+const state = { tokens: {}, active: new Set(), status: {}, sel: 'plan', tab: 'act', logs: {}, files: {}, edges: {}, cmd: 0, file: 0, issue: 0, rate: [], round: 1 };
+const TASK = `目标：修复 data/loader.py 在空窗口时的除零错误。
+改动范围：只改 data/loader.py 和 tests/test_loader.py。
+验收标准：
+1. 空列表返回 0.0，不抛异常
+2. 单元素列表返回该元素
+3. 调用方的类型保持 float
+验证命令：pytest tests/test_loader.py`;
+const FIX = `修复清单（来自裁决）：
+1. data/loader.py:12 空窗口返回 None，调用方按 float 使用。
+   输入 [] → 实际 None → 期望 0.0
+不要改动范围之外的内容。`;
+const DIFF = `@@ data/loader.py @@
+   def mean_speed(window):
+<span class="minus">-      return sum(window) / len(window)</span>
+<span class="plus">+      if not window:</span>
+<span class="plus">+          return 0.0</span>
+<span class="plus">+      return sum(window) / len(window)</span>`;
+
+const fmt = n => n >= 10000 ? (n / 10000).toFixed(1).replace(/\.0$/, '') + ' 万' : n.toLocaleString('zh-CN');
+const clip = (s, w) => { let u = 0, o = ''; for (const c of s) { u += c.charCodeAt(0) > 255 ? 1.85 : 1; if (u > w) return o + '…'; o += c; } return o; };
+const stamp = () => { const s = Math.floor(elapsed / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+
+/* Right angles with a small diagonal, like a circuit board trace. */
+function route(pts, r = 7) {
+  let d = `M${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1], [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    const a = Math.min(r, Math.hypot(x - px, y - py) / 2), b = Math.min(r, Math.hypot(nx - x, ny - y) / 2);
+    d += ` L${x - Math.sign(x - px) * a} ${y - Math.sign(y - py) * a} L${x + Math.sign(nx - x) * b} ${y + Math.sign(ny - y) * b}`;
+  }
+  const e = pts[pts.length - 1];
+  return d + ` L${e[0]} ${e[1]}`;
+}
+const chamfer = (x, y, w, h, c = 9) => `${x},${y} ${x + w - c},${y} ${x + w},${y + c} ${x + w},${y + h} ${x + c},${y + h} ${x},${y + h - c}`;
+function el(tag, attrs = {}, parent, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (text != null) n.textContent = text;
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+let layout, mode, edgeEls = {}, nodeEls = {}, packetLayer, packets = [];
+function draw() {
+  const svg = $('flow');
+  svg.textContent = '';
+  svg.setAttribute('viewBox', `0 0 ${layout.box[0]} ${layout.box[1]}`);
+  edgeEls = {}; nodeEls = {};
+  for (const [id, e] of Object.entries(layout.e)) {
+    const g = el('g', {}, svg);
+    const d = route(e.pts);
+    const glow = el('path', { d, class: 'glow' }, g);
+    el('path', { d, class: 'trace' + (e.back ? ' back' : '') }, g);
+    const hot = el('path', { d, class: 'hot' }, g);
+    const last = e.pts[e.pts.length - 1], prev = e.pts[e.pts.length - 2];
+    const ang = Math.atan2(last[1] - prev[1], last[0] - prev[0]) * 180 / Math.PI;
+    el('path', { d: 'M-6 -4 L0 0 L-6 4', fill: 'none', stroke: 'var(--hot)', 'stroke-width': 1.5, transform: `translate(${last[0]} ${last[1]}) rotate(${ang})` }, g);
+    el('text', { x: e.l[1], y: e.l[2], 'text-anchor': e.l[3], class: 'edge-l' }, g, e.l[0]);
+    edgeEls[id] = { g, hot, glow, len: hot.getTotalLength() };
+  }
+  for (const [id, r] of Object.entries(layout.n)) {
+    const [x, y, w, h] = r, def = NODES[id];
+    const g = el('g', { class: 'node', tabindex: 0, role: 'button', 'aria-label': `${def.title}：${def.role}`, style: `--c:${colorOf(def.who)}` }, svg);
+    el('polygon', { points: chamfer(x, y, w, h), class: 'halo' }, g);
+    el('polygon', { points: chamfer(x, y, w, h), class: 'frame' }, g);
+    el('rect', { x, y: y + 12, width: 2.5, height: h - 24, class: 'mark' }, g);
+    el('text', { x: x + 14, y: y + 22, class: 'n-t' }, g, def.title);
+    if (def.who !== 'human') {
+      const ox = def.who === 'claude' ? 60 : 54;
+      el('use', { href: `#i-${def.who}`, x: x + w - ox - 16, y: y + 11, width: 13, height: 13, style: `color:${colorOf(def.who)};fill:currentColor` }, g);
+      el('text', { x: x + w - ox, y: y + 22, class: 'n-w' }, g, def.who === 'claude' ? 'Claude' : 'Codex');
+    }
+    el('text', { x: x + 14, y: y + 40, class: 'n-r' }, g, clip(def.role, (w - 24) / 6.1));
+    let val = null, unit = null;
+    if (id !== 'gate') { val = el('text', { x: x + 14, y: y + h - 26, class: 'n-v' }, g, '0'); unit = el('text', { x: x + 14, y: y + h - 26, class: 'n-u' }, g, ''); }
+    const stat = el('text', { x: x + 14, y: y + h - 9, class: 'n-s' }, g, '等待');
+    g.addEventListener('click', () => select(id));
+    g.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(id); } });
+    nodeEls[id] = { g, val, unit, stat, w };
+  }
+  packetLayer = el('g', {}, svg);
+  packets = [];
+  paint();
+}
+function paint() {
+  for (const [id, n] of Object.entries(nodeEls)) {
+    n.g.classList.toggle('active', state.active.has(id));
+    n.g.classList.toggle('sel', state.sel === id);
+    n.stat.textContent = clip(state.status[id] || '等待', (n.w - 24) / 6.6);
+    if (n.val) { const t = state.tokens[id] || 0; n.val.textContent = fmt(t); n.unit.textContent = 'token'; n.unit.setAttribute('x', +n.val.getAttribute('x') + n.val.getComputedTextLength() + 6); }
+  }
+  for (const [id, e] of Object.entries(edgeEls)) {
+    const w = state.edges[id];
+    e.g.classList.toggle('edge-on', !!w);
+    if (w) { e.hot.setAttribute('stroke', colorOf(w)); e.glow.setAttribute('stroke', colorOf(w)); }
+  }
+}
+function fit() {
+  const cw = $('flowMod').clientWidth; const want = cw >= 720 ? 'wide' : cw >= 480 ? 'tall' : 'narrow';
+  if (want !== mode) { mode = want; layout = LAYOUTS[mode]; draw(); }
+}
+new ResizeObserver(fit).observe($('flowMod'));
+
+function select(k) { state.sel = k; if (k === 'gate') state.tab = 'act'; renderInsp(); paint(); }
+function renderInsp() {
+  const k = state.sel, d = NODES[k];
+  $('iT').textContent = d.title;
+  document.querySelector('.insp-m').style.setProperty('--c', colorOf(d.who));
+  $('iW').textContent = d.what;
+  const tabs = [['act', '活动'], ['diff', '改动'], ['task', '任务书']].filter(t => k === 'impl' ? true : k === 'plan' ? t[0] !== 'diff' : t[0] === 'act');
+  if (!tabs.some(t => t[0] === state.tab)) state.tab = 'act';
+  const tb = $('tabs'); tb.textContent = '';
+  tabs.forEach(([id, l]) => {
+    const b = document.createElement('button'); b.textContent = l; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', state.tab === id);
+    b.onclick = () => { state.tab = id; renderInsp(); }; tb.appendChild(b);
+  });
+  const p = $('pane'); p.textContent = '';
+  if (state.tab === 'act') {
+    const list = state.logs[k] || [];
+    if (!list.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = '这一步还没有开始。'; p.appendChild(e); }
+    else {
+      const ul = document.createElement('ul'); ul.className = 'rows';
+      list.forEach(r => {
+        const li = document.createElement('li');
+        const t = document.createElement('time'); t.textContent = r.time;
+        const kd = document.createElement('span'); kd.className = 'kind' + (r.kind === '问题' ? ' issue' : ''); kd.textContent = r.kind;
+        const b = document.createElement('div'); b.textContent = r.action;
+        if (r.result) { const s = document.createElement('div'); s.className = 'res' + (r.kind === '问题' ? ' bad' : ''); s.textContent = r.result; b.appendChild(s); }
+        li.append(t, kd, b); ul.appendChild(li);
+      });
+      p.appendChild(ul); p.scrollTop = p.scrollHeight;
+    }
+  } else if (state.tab === 'diff') {
+    const fs = state.files[k] || [];
+    if (!fs.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = '还没有文件改动。'; p.appendChild(e); }
+    else {
+      const ul = document.createElement('ul'); ul.className = 'files';
+      fs.forEach(f => { const li = document.createElement('li'); const n = document.createElement('span'); n.textContent = f.path; const c = document.createElement('span'); c.innerHTML = `<span class="plus">+${f.add}</span> <span class="minus">−${f.del}</span>`; li.append(n, c); ul.appendChild(li); });
+      p.appendChild(ul);
+      const pre = document.createElement('pre'); pre.className = 'diff'; pre.innerHTML = DIFF; p.appendChild(pre);
+    }
+  } else {
+    const pre = document.createElement('p'); pre.className = 'prompt'; pre.textContent = k === 'impl' && state.round > 1 ? FIX : TASK; p.appendChild(pre);
+  }
+  $('actions').hidden = !(k === 'gate' && state.active.has('gate'));
+}
+function setNow(text, who) { $('nowT').textContent = text; $('now').style.setProperty('--who', colorOf(who)); }
+function log(k, kind, action, result) { (state.logs[k] = state.logs[k] || []).push({ time: stamp(), kind, action, result }); }
+function tele() {
+  const c = (state.tokens.plan || 0) + (state.tokens.rev || 0) + (state.tokens.verdict || 0), x = (state.tokens.impl || 0) + (state.tokens.re || 0), m = Math.max(c + x, 1);
+  $('sClaude').textContent = '约 ' + fmt(c); $('sCodex').textContent = fmt(x);
+  $('bClaude').style.width = c / m * 100 + '%'; $('bCodex').style.width = x / m * 100 + '%';
+  $('cCmd').textContent = state.cmd; $('cFile').textContent = state.file; $('cIssue').textContent = state.issue;
+  const sp = $('spark'); sp.textContent = '';
+  const r = state.rate.slice(-40); if (r.length > 1) {
+    const hi = Math.max(...r, 1); const d = r.map((v, i) => `${i ? 'L' : 'M'}${i * 200 / Math.max(r.length - 1, 1)} ${27 - v / hi * 25}`).join(' ');
+    el('path', { d, fill: 'none', stroke: 'var(--hot)', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }, sp);
+  }
+}
+
+const STEPS = [
+  { t: 1800, on: ['plan'], sel: 'plan', now: 'Claude 正在读 AGENTS.md 和 data/loader.py', who: 'claude', status: { plan: '读代码' }, tok: { plan: 6000 }, log: ['plan', '读取', '读取 AGENTS.md、data/loader.py', '4 个文件'] },
+  { t: 1800, on: ['plan'], now: 'Claude 正在写任务书和 3 条验收标准', who: 'claude', status: { plan: '写任务书' }, tok: { plan: 6400 }, log: ['plan', '记录', '写出 3 条验收标准', ''] },
+  { t: 2200, on: ['impl'], sel: 'impl', edges: { task: 'claude' }, flow: { task: 4000 }, now: 'Claude 把任务书交给 Codex（新线程）', who: 'claude', status: { plan: '已交付', impl: '接收任务' }, tok: { plan: 2000 }, log: ['plan', '记录', '交给 Codex', '--fresh'] },
+  { t: 2200, on: ['impl'], now: 'Codex 正在搜索 mean_speed 的调用位置', who: 'codex', status: { impl: '运行命令' }, tok: { impl: 12000 }, cmd: 1, log: ['impl', '命令', 'rg -n "mean_speed" data tests', '找到 3 处'] },
+  { t: 2600, on: ['impl'], now: 'Codex 正在修改 data/loader.py', who: 'codex', status: { impl: '改 loader.py' }, tok: { impl: 28000 }, file: { path: 'data/loader.py', add: 3, del: 1 }, log: ['impl', '改文件', '修改 data/loader.py', '+3 −1'] },
+  { t: 2200, on: ['impl'], now: 'Codex 正在新增 tests/test_loader.py', who: 'codex', status: { impl: '写测试' }, tok: { impl: 21000 }, file: { path: 'tests/test_loader.py', add: 18, del: 0 }, log: ['impl', '改文件', '新增 tests/test_loader.py', '+18'] },
+  { t: 2000, on: ['impl'], now: 'Codex 正在运行 pytest', who: 'codex', status: { impl: 'pytest 通过 21' }, tok: { impl: 9000 }, cmd: 1, log: ['impl', '命令', 'pytest tests/test_loader.py', '通过 21 项'] },
+  { t: 2800, on: ['rev', 're'], sel: 'rev', edges: { toRev: 'codex', toRe: 'codex' }, flow: { toRev: 8000, toRe: 8000 }, now: 'Claude 和 Codex 正在分别审查同一份 diff', who: 'claude', status: { impl: '已交付', rev: '看 diff', re: '只读审查' }, tok: { rev: 15000, re: 9000 }, logs: [['rev', '读取', '查看完整 diff', '2 个文件'], ['re', '读取', '新线程审查同一份 diff', '只读']] },
+  { t: 2400, on: ['rev', 're'], now: 'Claude 正在亲自运行 pytest，不采信 Codex 的汇报', who: 'claude', status: { rev: '跑测试', re: '没有发现问题' }, tok: { rev: 9000, re: 7000 }, cmd: 1, logs: [['rev', '命令', '亲自运行 pytest', '通过 21 项'], ['re', '记录', '没有发现阻塞问题', '']] },
+  { t: 2400, on: ['verdict'], sel: 'verdict', edges: { revOut: 'claude', reOut: 'codex' }, flow: { revOut: 6000, reOut: 6000 }, now: 'Claude 正在汇总两份审查意见', who: 'claude', status: { rev: '发现 1 个问题', re: '已交付', verdict: '汇总意见' }, tok: { rev: 7000, verdict: 4000 }, issue: 1, logs: [['rev', '问题', '空窗口返回 None，调用方按 float 使用', '需修复'], ['verdict', '记录', '收到 2 份审查意见', 'Claude 1 个问题，Codex 无']] },
+  { t: 2600, on: ['impl'], sel: 'impl', round: 2, edges: { back: 'claude' }, flow: { back: 8000 }, now: '裁决：打回。Claude 把修复清单交回 Codex（第 2 轮）', who: 'claude', status: { verdict: '打回 1 个问题', impl: '接收修复清单' }, tok: { verdict: 3000 }, log: ['verdict', '问题', '打回给 Codex，附修复清单', '第 2 轮'] },
+  { t: 2400, on: ['impl'], now: 'Codex 正在按修复清单修改 data/loader.py', who: 'codex', status: { impl: '第 2 轮修复' }, tok: { impl: 15000 }, file: { path: 'data/loader.py', add: 1, del: 1 }, log: ['impl', '改文件', '按修复清单修改 data/loader.py', '+1 −1'] },
+  { t: 2600, on: ['rev', 're'], edges: { toRev: 'codex', toRe: 'codex' }, flow: { toRev: 4000, toRe: 4000 }, now: 'Claude 和 Codex 正在复核第 2 轮的修复', who: 'claude', status: { impl: '已交付', rev: '复核修复', re: '复核修复' }, tok: { rev: 8000, re: 5000 }, cmd: 1, logs: [['rev', '命令', '亲自运行 pytest', '通过 21 项'], ['re', '记录', '复核通过', '']] },
+  { t: 2200, on: ['verdict'], sel: 'verdict', edges: { revOut: 'claude', reOut: 'codex' }, flow: { revOut: 4000, reOut: 4000 }, now: 'Claude 正在逐条核对 3 条验收标准', who: 'claude', status: { rev: '通过', re: '通过', verdict: '核对标准' }, tok: { verdict: 3000 }, log: ['verdict', '记录', '3 条验收标准全部满足', '通过'] },
+  { t: 5000, on: ['gate'], sel: 'gate', edges: { pass: 'human' }, flow: { pass: 6000 }, now: '等你决定：合并到主分支，或者放弃这次改动', who: 'human', status: { verdict: '通过', gate: '等待你的决定' }, log: ['gate', '记录', '改动在分支 console/empty-window', '主分支没有动'] },
+];
+
+let idx = -1, elapsed = 0, clock = 0, nextAt = 1000, paused = false, queue = [];
+function advance() {
+  idx += 1;
+  if (idx >= STEPS.length) { reset(); return; }
+  const s = STEPS[idx];
+  state.active = new Set(s.on); state.edges = s.edges || {};
+  Object.assign(state.status, s.status || {});
+  let sum = 0;
+  for (const k in s.tok || {}) { state.tokens[k] = (state.tokens[k] || 0) + s.tok[k]; sum += s.tok[k]; }
+  state.rate.push(sum);
+  if (s.cmd) state.cmd += s.cmd;
+  if (s.issue) state.issue += s.issue;
+  if (s.file) { const fs = state.files.impl = state.files.impl || []; const f = fs.find(x => x.path === s.file.path); if (f) { f.add += s.file.add; f.del += s.file.del; } else { fs.push({ ...s.file }); state.file += 1; } }
+  (s.logs || (s.log ? [s.log] : [])).forEach(l => log(l[0], l[1], l[2], l[3]));
+  if (s.round) { state.round = s.round; $('r' + s.round).classList.add('on'); $('rt').textContent = `第 ${s.round} 轮`; }
+  setNow(s.now, s.who);
+  for (const id in s.flow || {}) queue.push({ id, n: Math.round(s.flow[id] / TOKENS_PER_PACKET), gap: 0 });
+  if (s.sel) state.sel = s.sel;
+  renderInsp(); paint(); tele();
+  nextAt = clock + s.t;
+}
+function reset() {
+  idx = -1; elapsed = 0; state.tokens = {}; state.status = {}; state.logs = {}; state.files = {}; state.edges = {}; state.active = new Set(); state.cmd = state.file = state.issue = 0; state.rate = []; state.round = 1; queue = [];
+  ['r2', 'r3'].forEach(i => $(i).classList.remove('on')); $('rt').textContent = '第 1 轮'; state.sel = 'plan';
+  setNow('准备开始', 'claude'); renderInsp(); paint(); tele(); nextAt = clock + 1200;
+}
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(now - last, 60); last = now;
+  if (!paused) {
+    clock += dt; elapsed += dt; $('clock').textContent = stamp();
+    if (clock >= nextAt) advance();
+    for (const q of queue) {
+      q.gap -= dt;
+      if (q.n > 0 && q.gap <= 0 && edgeEls[q.id]) {
+        const who = state.edges[q.id] || 'hot';
+        const r = el('rect', { width: 7, height: 2.5, x: -3.5, y: -1.25, fill: colorOf(who) }, packetLayer);
+        packets.push({ r, e: edgeEls[q.id], at: 0 }); q.n -= 1; q.gap = 170;
+      }
+    }
+    queue = queue.filter(q => q.n > 0);
+    packets = packets.filter(p => {
+      p.at += dt * .14;
+      if (p.at >= p.e.len) { p.r.remove(); return false; }
+      const a = p.e.hot.getPointAtLength(p.at), b = p.e.hot.getPointAtLength(Math.min(p.at + 1, p.e.len));
+      p.r.setAttribute('transform', `translate(${a.x} ${a.y}) rotate(${Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI})`);
+      return true;
+    });
+  }
+  requestAnimationFrame(frame);
+}
+$('fast').onclick = () => { const on = $('fast').getAttribute('aria-checked') !== 'true'; $('fast').setAttribute('aria-checked', on); $('fastT').textContent = on ? 'Fast 开，额度消耗约 ×2.5' : 'Fast 关，标准档'; };
+$('pause').onclick = e => { paused = !paused; e.target.textContent = paused ? '继续' : '暂停'; };
+
+fit();
+setNow('准备开始', 'claude');
+renderInsp(); tele();
+if (reduced) { while (idx < STEPS.length - 1) advance(); } else { requestAnimationFrame(frame); }
+</script>
+</body>
+</html>

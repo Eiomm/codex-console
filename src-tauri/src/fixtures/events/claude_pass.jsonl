@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fake-claude","model":"fake","base_instructions":"private"}
+{"type":"assistant","session_id":"fake-claude","parent_tool_use_id":null,"message":{"content":[{"type":"thinking","thinking":"private","signature":"private"},{"type":"text","text":"[[verdict:start]]\n审查结束\n[[verdict:pass]]\n全部通过"}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"fake-claude","duration_ms":10,"num_turns":1}
