@@ -81,7 +81,7 @@ describe('run reducer', () => {
     expect(run.issues).toBe(1);
   });
   test('the independent review is visible even though it leaves no session log', () => {
-    const c = { tsMs: 1, agent: 'claude' as const, sourceId: 's' };
+    const c = { tsMs: 2000, agent: 'claude' as const, sourceId: 's' };
     const bash = (toolUseId: string, summary: string): RunEvent => ({ ...c, kind: 'tool', toolUseId, name: 'Bash', summary, isError: false, truncated: false });
     let { run, packets } = feed([
       { ...c, kind: 'handoff', mode: 'fresh', description: 'd' },
@@ -92,10 +92,10 @@ describe('run reducer', () => {
     ]);
     expect(run.rows.re.map(r => r.action)).toEqual(['新线程只读审查当前改动']);
     expect(run.active).toBe('re');
-    expect(packets.at(-1)?.edge).toBe('toRe');
+    expect(packets[packets.length - 1]?.edge).toBe('toRe');
     expect(run.rows.rev).toHaveLength(0);
     run = feed([{ ...c, kind: 'toolResult', toolUseId: 'v1', text: JSON.stringify({ codex: { stdout: 'No actionable defects.' } }), isError: false, truncated: false }], run).run;
-    expect(run.rows.re.at(-1)).toMatchObject({ action: '复审结论', result: 'No actionable defects.' });
+    expect(run.rows.re[run.rows.re.length - 1]).toMatchObject({ action: '复审结论', result: 'No actionable defects.' });
     expect(run.status.re).toBe('已给出意见');
     expect(run.reviewTool).toBeNull();
   });
